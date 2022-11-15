@@ -32,7 +32,7 @@ import redis
 import os
 import json
 from oauthlib.oauth2 import WebApplicationClient
-from user import User
+from models import User
 import random
 import spotipy.util as util
 
