@@ -1,28 +1,4 @@
-''' Example of Spotify authorization code flow (refreshable user auth).
-
-Displays profile information of authenticated user and access token
-information that can be refreshed by clicking a button.
-
-Basic flow:
-    -> '/'
-    -> Spotify login page
-    -> '/callback'
-    -> get tokens
-    -> use tokens to access API
-
-Required environment variables:
-    FLASK_APP, CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SECRET_KEY
-
-More info:
-    https://developer.spotify.com/documentation/general/guides/authorization-guide/#authorization-code-flow
-
-'''
 import os
-if int(os.environ.get('DEBUG')) == 1:
-    debug = True
-else:
-    debug = False
-  # when i run locally True, when I deploy it False
 
 from flask import (
     abort,
@@ -60,16 +36,19 @@ from user import User
 import random
 import spotipy.util as util
 
+debug = (int(os.environ.get('DEBUG')) == 1)
+if debug:
+    HOST = 'http://127.0.0.1:5000'
+else:
+    HOST = 'https://www.yalewrappd.com'
 
+REDIRECT_URI = HOST + '/callback'
+
+BLACK_IMAGE_URL = "https://images.unsplash.com/photo-1548697143-6a9dc9d9d80f?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxzZWFyY2h8Mnx8YmxhY2slMjBzY3JlZW58ZW58MHx8MHx8&w=1000&q=80"
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
-GOOGLE_DISCOVERY_URL = (
-    "https://accounts.google.com/.well-known/openid-configuration"
-)
-
-black_image_url = "https://images.unsplash.com/photo-1548697143-6a9dc9d9d80f?ixlib=rb-4.0.3&ixid=MnwxMjA3fDB8MHxzZWFyY2h8Mnx8YmxhY2slMjBzY3JlZW58ZW58MHx8MHx8&w=1000&q=80"
-
+GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
 # OAuth 2 client setup
 client = WebApplicationClient(GOOGLE_CLIENT_ID)
@@ -81,10 +60,6 @@ r = redis.from_url(os.environ.get("REDIS_URL"))
 CLIENT_ID = os.environ.get("SPOTIPY_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("SPOTIPY_CLIENT_SECRET")
 
-if debug:
-    REDIRECT_URI = 'http://127.0.0.1:5000/callback'
-else:
-    REDIRECT_URI = 'https://www.yalewrappd.com/callback'
 
 # Spotify API endpoints
 AUTH_URL = 'https://accounts.spotify.com/authorize'
@@ -94,46 +69,30 @@ ME_URL = 'https://api.spotify.com/v1/me'
 # Start 'er up
 app = Flask(__name__)
 app.secret_key = os.environ.get("APP_SECRET_KEY")
-#Talisman(app)
-
-
 login_manager = LoginManager(app)
-#login_manager.init_app(app)
 Talisman(app, content_security_policy=None)
-#Talisman(app)
 
+# Spotify constants
 scope = 'user-library-read user-top-read playlist-modify-public'
-
 username = 'bearsyankees'
-
-
-#track_dict = {}
-playlist_id="57IF8qCfvZTi06QQHqvYIv"
-#r.mset({"tracks": json.dumps(track_dict)})
-#print(json.loads(r.mget("tracks")[0].decode()).get("song2"))
+playlist_id = "57IF8qCfvZTi06QQHqvYIv"
 
 
 @login_manager.user_loader
 def load_user(user_id):
     return User.get(user_id)
 
+
 @app.route("/")
 def indexG():
     if session.get('auth') or debug:
         return render_template('index.html')
-        #return "dubs" """"(
-            #"<p>Hello, {}! You're logged in! Email: {}</p>"
-           # "<div><p>Google Profile Picture:</p>"
-           # '<img src="{}" alt="Google profile pic"></img></div>'
-           # '<a class="button" href="/logout">Logout</a>'.format(
-           #     current_user.name, current_user.email, current_user.profile_pic
-           # )
-       # )"""
-    else:
-        return render_template('indexG.html')
+    return render_template('indexG.html')
+
 
 def get_google_provider_cfg():
     return requests.get(GOOGLE_DISCOVERY_URL).json()
+
 
 @app.route("/loginG")
 def loginG():
@@ -149,6 +108,7 @@ def loginG():
         scope=["openid", "email", "profile"],
     )
     return redirect(request_uri)
+
 
 @app.route("/loginG/callback")
 def callbackG():
@@ -180,36 +140,28 @@ def callbackG():
     userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
     uri, headers, body = client.add_token(userinfo_endpoint)
     userinfo_response = requests.get(uri, headers=headers, data=body)
+    user_json = userinfo_response.json()
 
-    userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
-    uri, headers, body = client.add_token(userinfo_endpoint)
-    userinfo_response = requests.get(uri, headers=headers, data=body)
     # Begin user session by logging the user in
-    if userinfo_response.json().get("email_verified"):
-        unique_id = userinfo_response.json()["sub"]
-        users_email = userinfo_response.json()["email"]
-        picture = userinfo_response.json()["picture"]
-        users_name = userinfo_response.json()["given_name"]
-    else:
+    if not user_json.get("email_verified"):
         return "User email not available or not verified by Google.", 400
+    user_id = user_json["sub"]
+    email = user_json["email"]
+    picture = user_json["picture"]
+    name = user_json["given_name"]
 
     user = User(
-        id_=unique_id, name=users_name, email=users_email, profile_pic=picture
+        id_=user_id, name=name, email=email, profile_pic=picture
     )
     # Send user back to homepage
-    if "@yale.edu" in userinfo_response.json()["email"]:
-        login_user(user)
-        session['auth'] = True
-        print("email:", userinfo_response.json()["email"])
-        r.mset({userinfo_response.json()["email"]: str(True)})
-        return redirect(url_for("indexG"))
-    else:
-        return "sorry not a yale email"
+    if "@yale.edu" not in email:
+        return "Sorry, you must log in with an @yale.edu email."
+    login_user(user)
+    session['auth'] = True
+    print("email:", email)
+    r.mset({ email: str(True) })
+    return redirect(url_for("indexG"))
 
-
-"""@app.route('/')
-def index():
-    return render_template('index.html')"""
 
 @app.route("/logoutG")
 @login_required
@@ -218,12 +170,11 @@ def logoutG():
     return redirect(url_for("indexG"))
 
 
-
-
-
+# TODO: this matches *all* paths. I would recommend having a login and logout rout explicitly declared. You can put two @app.route decorators on adjacent lines above a single function def. Also, may be worth clarifying in your naming that this pertains to spotify logins/logouts.
 @app.route('/<loginout>')
 def login(loginout):
-    '''Login or logout user.
+    '''
+    Login or logout user.
 
     Note:
         Login and logout process are essentially the same.  Logout forces
@@ -384,7 +335,7 @@ def me():
                 artists.append([i + 1, item['name'], item['images'][0]['url'], item['popularity']])
             except:
                 #print(i, item)
-                artists.append([i + 1, item['name'], black_image_url, item['popularity']])
+                artists.append([i + 1, item['name'], BLACK_IMAGE_URL, item['popularity']])
         #print(artists)
         try:
             most_pop_for_quip = random.choice(sorted([artist for artist in artists[:10] if artist[1] != "Kanye West"], key=lambda t: t[3], reverse=True)[0:3])[1]
@@ -440,18 +391,19 @@ def data():
             #return "poop"
             #return json.dumps(list(map(lambda n: (n.decode("utf-8"), r.get(n).decode("utf-8")) if r.get(n).decode("utf-8").isdigit() else None, r.keys())))
 
-            return json.dumps(sorted(list(map(lambda n: (n.decode("utf-8"), r.get(n).decode("utf-8")) if r.get(n).decode("utf-8").isdigit() else None, r.keys())),key = lambda x: int(x[1]) if x else 0, reverse = True))
+            return json.dumps(sorted(list(map(lambda n: (n.decode('utf-8'), r.get(n).decode('utf-8')) if r.get(n).decode('utf-8').isdigit() else None, r.keys())),key = lambda x: int(x[1]) if x else 0, reverse = True))
 
 @app.route('/graph' , methods=['GET', 'POST'])
 def graph():
     if request.method == 'GET':
-        return password_prompt_graph("Admin password:")
+        return password_prompt_graph('Admin password:')
     elif request.method == 'POST':
         if request.form['password'] != PASSPHRASE:
-            return password_prompt_graph("Invalid password, try again. Admin password:")
+            return password_prompt_graph('Invalid password, try again. Admin password:')
         else:
+            # TODO: perhaps move this to a JSON file for code cleanliness sake
             if 1 == 2: # debug:
-                names = ['Kanye West', 'Taylor Swift', 'Lana Del Rey', 'ROSALÍA', 'Kendrick Lamar', 'Mac Miller', 'Big Thief', 'Steve Lacy', 'Japanese Breakfast', 'Elliott Smith', 'Harry Styles', 'Bad Bunny', 'Lorde', 'Drake', 'Angel Olsen', 'Frank Ocean', 'Charli XCX', 'Beyoncé', 'The Beatles', 'Tyler, The Creator', '070 Shake', 'Radiohead', 'Father John Misty', 'Remi Wolf', 'Djo', 'Lizzy McAlpine', 'Playboi Carti', 'Fiona Apple', 'Miley Cyrus', 'Adrianne Lenker', 'Emile Mosseri', 'Lucy Dacus', 'The 1975', 'Chance the Rapper', 'Vampire Weekend', 'Simon & Garfunkel', 'Weyes Blood', 'Nina Simone', 'Bruno Mars', 'Lupe Fiasco', 'Labrinth', 'C. Tangana', 'Sufjan Stevens', 'beabadoobee', 'Mimi Webb', 'The Regrettes', 'Natalia Lafourcade', 'Cher', 'Tame Impala', 'The Beach Boys', 'Quarteto Em Cy', 'SIX', 'Soccer Mommy', 'The Rolling Stones', 'Amy Winehouse', 'Smino', 'Phoebe Bridgers', 'James Blake', 'J Balvin', 'Joey Bada$$', 'AJR', 'MIKA', 'Adele', 'Leikeli47', 'Calvin Harris', 'Bon Iver', 'Max Richter', 'Pusha T', 'Grateful Dead', 'Superorganism', 'Rauw Alejandro', 'Shania Twain', 'Eminem', 'Travis Scott', 'Pink Floyd', 'Elton John', 'Kid Cudi', 'Snail Mail', 'Fleet Foxes', 'Billie Eilish', 'Joy Crookes', 'Hans Zimmer', 'KAYTRANADA', 'Kota the Friend', 'Clairo', 'Post Malone', 'Rihanna', 'Billie Marten', 'Indigo De Souza', 'Kacey Musgraves', 'The Alchemist', 'The Velvet Underground', 'Saba', 'Rainbow Kitten Surprise', 'Gipsy Kings', 'Stormzy', 'Silvana Estrada', 'Vivaldi Piano Project', 'Perfume Genius', 'Mojave 3', 'Maude Latour', 'Lil Uzi Vert', 'Kelly Clarkson', 'Dry Cleaning', 'Alex G', 'Silvio Rodríguez', 'Anderson .Paak', 'Florist', 'Caamp', 'Childish Gambino', 'Whitney', 'Moses Sumney', 'A$AP Rocky', 'FKA twigs', 'Take That', 'Rodrigo Amarante', 'Faye Webster', 'David Bowie', 'Christian Lee Hutson', 'Omer Adam', 'Harry Nilsson', 'Guitarricadelafuente', 'DJ Khaled', 'Lil Tjay', 'The Coup', 'Tomppabeats', 'Florence + The Machine', 'Polo & Pan', 'Belle and Sebastian', 'Dean Martin', 'Death Cab for Cutie', 'The Doors', 'AJ Tracey', 'El Alfa', 'Dijon', 'Central Cee', 'Rex Orange County', 'alt-J', 'SZA', 'John Lennon', 'Courtney Barnett', 'Miguel', 'J. Cole', 'Ethel Cain', 'Steely Dan', 'Mac DeMarco', 'Jerry Garcia', 'Birdy', 'Genesis Owusu', 'Mt. Joy', 'Katy Perry', 'Las Ketchup', 'Alan Silvestri', 'Sofi Tukker', 'New Order', 'Matty Wood$', 'Dave', 'The Japanese House', 'Eydie Gormé', 'NxWorries', 'Coldplay', 'Stevie Wonder', 'Blood Orange', 'Bob Dylan', 'The Strokes', 'ABBA', 'Enrique Iglesias', 'ROLE MODEL', 'JAY-Z', 'Sudan Archives', 'Still Woozy', 'redveil', 'Julien Baker', 'Bladee', 'LUCKI', 'Dominic Fike', 'Wiley Beckett', 'Automatic', 'Jonny Greenwood', 'Paul Simon', 'Toro y Moi', 'Alanis Morissette', 'Yung Lean', 'Green Day', 'Thundercat', 'Girlpool', 'Michael Jackson', 'Rita Payés', 'Daft Punk', 'The Wallflowers', 'Zusha', 'Andrew Bird', 'Kali Uchis', 'Fleetwood Mac', 'Gorillaz', 'Nena', 'Joan Baez', 'Billy Ocean', 'Amantina', 'The Lumineers', 'Brian Eno', "Noel Gallagher's High Flying Birds", 'Channel Tres', 'Wiz Khalifa', 'Flo Rida', 'Parquet Courts', 'Funkadelic', 'Treekoo', 'Ravid Plotnik', 'Olivia Dean', 'Peter McPoland', 'Scouting For Girls', 'HAIM', 'COBRAH', 'Supertramp', 'Sir Chloe', 'Daddy Yankee', 'Babe Rainbow', 'Rae Sremmurd', 'Bruce Springsteen', 'reggie', 'Gavin DeGraw', 'Omar Apollo', 'Kesha', 'Kaitlyn Aurelia Smith', 'JID', 'Phoenix', 'Ben Platt', 'FrankJavCee', 'Lake Street Dive', 'Tove Lo', 'Baby Keem', 'Ramin Djawadi', 'Hannah Montana', 'Nick Drake', 'Lil Nas X', 'Madonna', 'Cage The Elephant', 'Chuki Beats', 'Fabiano do Nascimento', '5 Seconds of Summer', 'Ronan Keating', 'Wet Leg', 'Beach House', 'Meek Mill', 'Miles Davis', 'Leona Lewis', 'Gustavo Cerati', 'Otis Redding']
+                names = ['Kanye West', 'Taylor Swift', 'Lana Del Rey', 'ROSALÍA', 'Kendrick Lamar', 'Mac Miller', 'Big Thief', 'Steve Lacy', 'Japanese Breakfast', 'Elliott Smith', 'Harry Styles', 'Bad Bunny', 'Lorde', 'Drake', 'Angel Olsen', 'Frank Ocean', 'Charli XCX', 'Beyoncé', 'The Beatles', 'Tyler, The Creator', '070 Shake', 'Radiohead', 'Father John Misty', 'Remi Wolf', 'Djo', 'Lizzy McAlpine', 'Playboi Carti', 'Fiona Apple', 'Miley Cyrus', 'Adrianne Lenker', 'Emile Mosseri', 'Lucy Dacus', 'The 1975', 'Chance the Rapper', 'Vampire Weekend', 'Simon & Garfunkel', 'Weyes Blood', 'Nina Simone', 'Bruno Mars', 'Lupe Fiasco', 'Labrinth', 'C. Tangana', 'Sufjan Stevens', 'beabadoobee', 'Mimi Webb', 'The Regrettes', 'Natalia Lafourcade', 'Cher', 'Tame Impala', 'The Beach Boys', 'Quarteto Em Cy', 'SIX', 'Soccer Mommy', 'The Rolling Stones', 'Amy Winehouse', 'Smino', 'Phoebe Bridgers', 'James Blake', 'J Balvin', 'Joey Bada$$', 'AJR', 'MIKA', 'Adele', 'Leikeli47', 'Calvin Harris', 'Bon Iver', 'Max Richter', 'Pusha T', 'Grateful Dead', 'Superorganism', 'Rauw Alejandro', 'Shania Twain', 'Eminem', 'Travis Scott', 'Pink Floyd', 'Elton John', 'Kid Cudi', 'Snail Mail', 'Fleet Foxes', 'Billie Eilish', 'Joy Crookes', 'Hans Zimmer', 'KAYTRANADA', 'Kota the Friend', 'Clairo', 'Post Malone', 'Rihanna', 'Billie Marten', 'Indigo De Souza', 'Kacey Musgraves', 'The Alchemist', 'The Velvet Underground', 'Saba', 'Rainbow Kitten Surprise', 'Gipsy Kings', 'Stormzy', 'Silvana Estrada', 'Vivaldi Piano Project', 'Perfume Genius', 'Mojave 3', 'Maude Latour', 'Lil Uzi Vert', 'Kelly Clarkson', 'Dry Cleaning', 'Alex G', 'Silvio Rodríguez', 'Anderson .Paak', 'Florist', 'Caamp', 'Childish Gambino', 'Whitney', 'Moses Sumney', 'A$AP Rocky', 'FKA twigs', 'Take That', 'Rodrigo Amarante', 'Faye Webster', 'David Bowie', 'Christian Lee Hutson', 'Omer Adam', 'Harry Nilsson', 'Guitarricadelafuente', 'DJ Khaled', 'Lil Tjay', 'The Coup', 'Tomppabeats', 'Florence + The Machine', 'Polo & Pan', 'Belle and Sebastian', 'Dean Martin', 'Death Cab for Cutie', 'The Doors', 'AJ Tracey', 'El Alfa', 'Dijon', 'Central Cee', 'Rex Orange County', 'alt-J', 'SZA', 'John Lennon', 'Courtney Barnett', 'Miguel', 'J. Cole', 'Ethel Cain', 'Steely Dan', 'Mac DeMarco', 'Jerry Garcia', 'Birdy', 'Genesis Owusu', 'Mt. Joy', 'Katy Perry', 'Las Ketchup', 'Alan Silvestri', 'Sofi Tukker', 'New Order', 'Matty Wood$', 'Dave', 'The Japanese House', 'Eydie Gormé', 'NxWorries', 'Coldplay', 'Stevie Wonder', 'Blood Orange', 'Bob Dylan', 'The Strokes', 'ABBA', 'Enrique Iglesias', 'ROLE MODEL', 'JAY-Z', 'Sudan Archives', 'Still Woozy', 'redveil', 'Julien Baker', 'Bladee', 'LUCKI', 'Dominic Fike', 'Wiley Beckett', 'Automatic', 'Jonny Greenwood', 'Paul Simon', 'Toro y Moi', 'Alanis Morissette', 'Yung Lean', 'Green Day', 'Thundercat', 'Girlpool', 'Michael Jackson', 'Rita Payés', 'Daft Punk', 'The Wallflowers', 'Zusha', 'Andrew Bird', 'Kali Uchis', 'Fleetwood Mac', 'Gorillaz', 'Nena', 'Joan Baez', 'Billy Ocean', 'Amantina', 'The Lumineers', 'Brian Eno', 'Noel Gallagher\'s High Flying Birds', 'Channel Tres', 'Wiz Khalifa', 'Flo Rida', 'Parquet Courts', 'Funkadelic', 'Treekoo', 'Ravid Plotnik', 'Olivia Dean', 'Peter McPoland', 'Scouting For Girls', 'HAIM', 'COBRAH', 'Supertramp', 'Sir Chloe', 'Daddy Yankee', 'Babe Rainbow', 'Rae Sremmurd', 'Bruce Springsteen', 'reggie', 'Gavin DeGraw', 'Omar Apollo', 'Kesha', 'Kaitlyn Aurelia Smith', 'JID', 'Phoenix', 'Ben Platt', 'FrankJavCee', 'Lake Street Dive', 'Tove Lo', 'Baby Keem', 'Ramin Djawadi', 'Hannah Montana', 'Nick Drake', 'Lil Nas X', 'Madonna', 'Cage The Elephant', 'Chuki Beats', 'Fabiano do Nascimento', '5 Seconds of Summer', 'Ronan Keating', 'Wet Leg', 'Beach House', 'Meek Mill', 'Miles Davis', 'Leona Lewis', 'Gustavo Cerati', 'Otis Redding']
                 numbers = ['229', '209', '194', '186', '157', '151', '150', '148', '120', '120', '98', '97', '95', '93', '89', '88', '87', '87', '86', '83', '81', '77', '73', '71', '68', '68', '67', '67', '67', '65', '65', '63', '62', '57', '56', '56', '54', '54', '51', '49', '49', '49', '49', '49', '48', '48', '48', '47', '47', '46', '46', '46', '46', '46', '45', '45', '45', '45', '44', '44', '44', '44', '43', '43', '43', '43', '42', '42', '42', '42', '42', '42', '41', '41', '41', '40', '40', '40', '40', '40', '40', '39', '39', '39', '39', '39', '38', '38', '38', '38', '38', '37', '37', '37', '37', '37', '36', '36', '35', '35', '35', '35', '35', '35', '34', '34', '34', '33', '33', '33', '32', '32', '32', '32', '31', '31', '31', '31', '31', '31', '30', '30', '30', '30', '29', '29', '29', '28', '28', '28', '28', '27', '27', '27', '26', '26', '26', '26', '25', '25', '25', '25', '25', '25', '24', '24', '23', '23', '23', '23', '22', '22', '22', '22', '21', '21', '21', '21', '20', '20', '20', '19', '19', '19', '19', '19', '19', '18', '18', '18', '18', '17', '17', '17', '16', '16', '16', '16', '16', '15', '15', '15', '15', '15', '14', '14', '14', '14', '13', '13', '13', '13', '13', '12', '12', '12', '12', '12', '11', '11', '11', '11', '11', '10', '10', '10', '10', '10', '9', '9', '9', '9', '9', '9', '8', '8', '8', '8', '8', '7', '7', '7', '7', '6', '6', '6', '5', '5', '5', '4', '4', '4', '4', '4', '4', '4', '3', '3', '3', '3', '2', '2', '2', '2', '2', '1', '1', '1', '1']
             else:
                 data = sorted(list(map(lambda n: (n.decode("utf-8"), r.get(n).decode("utf-8")) if r.get(n).decode("utf-8").isdigit() else None, r.keys())),key = lambda x: int(x[1]) if x else 0, reverse = True)
@@ -483,61 +435,6 @@ def sd():
                     track_res.append([i + 1, "{} -- {}".format(track_f["name"],track_f["artists"][0]["name"]),track[1]])
             return track_res
 
-if debug:
-    pass
-    """@app.route('/flush')
-    def flush():
-        r.flushdb()
-        return "flushed"""
 
-    """
- @app.route('/data')
-    def data():
-        for key in r.keys():
-            print(key.decode("utf-8"))
-        #print(json.dumps(list(map(lambda n: (n.decode("utf-8"), r.get(n).decode("utf-8")), r.keys()))))
-        #return "poop"
-        #return json.dumps(list(map(lambda n: (n.decode("utf-8"), r.get(n).decode("utf-8")) if r.get(n).decode("utf-8").isdigit() else None, r.keys())))
-
-        return json.dumps(sorted(list(map(lambda n: (n.decode("utf-8"), r.get(n).decode("utf-8")) if r.get(n).decode("utf-8").isdigit() else None, r.keys())),key = lambda x: int(x[1]) if x else 0, reverse = True))
-
-    @app.route('/graph')
-    def graph():
-        if 1 == 2: # debug:
-            names = ['Kanye West', 'Taylor Swift', 'Lana Del Rey', 'ROSALÍA', 'Kendrick Lamar', 'Mac Miller', 'Big Thief', 'Steve Lacy', 'Japanese Breakfast', 'Elliott Smith', 'Harry Styles', 'Bad Bunny', 'Lorde', 'Drake', 'Angel Olsen', 'Frank Ocean', 'Charli XCX', 'Beyoncé', 'The Beatles', 'Tyler, The Creator', '070 Shake', 'Radiohead', 'Father John Misty', 'Remi Wolf', 'Djo', 'Lizzy McAlpine', 'Playboi Carti', 'Fiona Apple', 'Miley Cyrus', 'Adrianne Lenker', 'Emile Mosseri', 'Lucy Dacus', 'The 1975', 'Chance the Rapper', 'Vampire Weekend', 'Simon & Garfunkel', 'Weyes Blood', 'Nina Simone', 'Bruno Mars', 'Lupe Fiasco', 'Labrinth', 'C. Tangana', 'Sufjan Stevens', 'beabadoobee', 'Mimi Webb', 'The Regrettes', 'Natalia Lafourcade', 'Cher', 'Tame Impala', 'The Beach Boys', 'Quarteto Em Cy', 'SIX', 'Soccer Mommy', 'The Rolling Stones', 'Amy Winehouse', 'Smino', 'Phoebe Bridgers', 'James Blake', 'J Balvin', 'Joey Bada$$', 'AJR', 'MIKA', 'Adele', 'Leikeli47', 'Calvin Harris', 'Bon Iver', 'Max Richter', 'Pusha T', 'Grateful Dead', 'Superorganism', 'Rauw Alejandro', 'Shania Twain', 'Eminem', 'Travis Scott', 'Pink Floyd', 'Elton John', 'Kid Cudi', 'Snail Mail', 'Fleet Foxes', 'Billie Eilish', 'Joy Crookes', 'Hans Zimmer', 'KAYTRANADA', 'Kota the Friend', 'Clairo', 'Post Malone', 'Rihanna', 'Billie Marten', 'Indigo De Souza', 'Kacey Musgraves', 'The Alchemist', 'The Velvet Underground', 'Saba', 'Rainbow Kitten Surprise', 'Gipsy Kings', 'Stormzy', 'Silvana Estrada', 'Vivaldi Piano Project', 'Perfume Genius', 'Mojave 3', 'Maude Latour', 'Lil Uzi Vert', 'Kelly Clarkson', 'Dry Cleaning', 'Alex G', 'Silvio Rodríguez', 'Anderson .Paak', 'Florist', 'Caamp', 'Childish Gambino', 'Whitney', 'Moses Sumney', 'A$AP Rocky', 'FKA twigs', 'Take That', 'Rodrigo Amarante', 'Faye Webster', 'David Bowie', 'Christian Lee Hutson', 'Omer Adam', 'Harry Nilsson', 'Guitarricadelafuente', 'DJ Khaled', 'Lil Tjay', 'The Coup', 'Tomppabeats', 'Florence + The Machine', 'Polo & Pan', 'Belle and Sebastian', 'Dean Martin', 'Death Cab for Cutie', 'The Doors', 'AJ Tracey', 'El Alfa', 'Dijon', 'Central Cee', 'Rex Orange County', 'alt-J', 'SZA', 'John Lennon', 'Courtney Barnett', 'Miguel', 'J. Cole', 'Ethel Cain', 'Steely Dan', 'Mac DeMarco', 'Jerry Garcia', 'Birdy', 'Genesis Owusu', 'Mt. Joy', 'Katy Perry', 'Las Ketchup', 'Alan Silvestri', 'Sofi Tukker', 'New Order', 'Matty Wood$', 'Dave', 'The Japanese House', 'Eydie Gormé', 'NxWorries', 'Coldplay', 'Stevie Wonder', 'Blood Orange', 'Bob Dylan', 'The Strokes', 'ABBA', 'Enrique Iglesias', 'ROLE MODEL', 'JAY-Z', 'Sudan Archives', 'Still Woozy', 'redveil', 'Julien Baker', 'Bladee', 'LUCKI', 'Dominic Fike', 'Wiley Beckett', 'Automatic', 'Jonny Greenwood', 'Paul Simon', 'Toro y Moi', 'Alanis Morissette', 'Yung Lean', 'Green Day', 'Thundercat', 'Girlpool', 'Michael Jackson', 'Rita Payés', 'Daft Punk', 'The Wallflowers', 'Zusha', 'Andrew Bird', 'Kali Uchis', 'Fleetwood Mac', 'Gorillaz', 'Nena', 'Joan Baez', 'Billy Ocean', 'Amantina', 'The Lumineers', 'Brian Eno', "Noel Gallagher's High Flying Birds", 'Channel Tres', 'Wiz Khalifa', 'Flo Rida', 'Parquet Courts', 'Funkadelic', 'Treekoo', 'Ravid Plotnik', 'Olivia Dean', 'Peter McPoland', 'Scouting For Girls', 'HAIM', 'COBRAH', 'Supertramp', 'Sir Chloe', 'Daddy Yankee', 'Babe Rainbow', 'Rae Sremmurd', 'Bruce Springsteen', 'reggie', 'Gavin DeGraw', 'Omar Apollo', 'Kesha', 'Kaitlyn Aurelia Smith', 'JID', 'Phoenix', 'Ben Platt', 'FrankJavCee', 'Lake Street Dive', 'Tove Lo', 'Baby Keem', 'Ramin Djawadi', 'Hannah Montana', 'Nick Drake', 'Lil Nas X', 'Madonna', 'Cage The Elephant', 'Chuki Beats', 'Fabiano do Nascimento', '5 Seconds of Summer', 'Ronan Keating', 'Wet Leg', 'Beach House', 'Meek Mill', 'Miles Davis', 'Leona Lewis', 'Gustavo Cerati', 'Otis Redding']
-            numbers = ['229', '209', '194', '186', '157', '151', '150', '148', '120', '120', '98', '97', '95', '93', '89', '88', '87', '87', '86', '83', '81', '77', '73', '71', '68', '68', '67', '67', '67', '65', '65', '63', '62', '57', '56', '56', '54', '54', '51', '49', '49', '49', '49', '49', '48', '48', '48', '47', '47', '46', '46', '46', '46', '46', '45', '45', '45', '45', '44', '44', '44', '44', '43', '43', '43', '43', '42', '42', '42', '42', '42', '42', '41', '41', '41', '40', '40', '40', '40', '40', '40', '39', '39', '39', '39', '39', '38', '38', '38', '38', '38', '37', '37', '37', '37', '37', '36', '36', '35', '35', '35', '35', '35', '35', '34', '34', '34', '33', '33', '33', '32', '32', '32', '32', '31', '31', '31', '31', '31', '31', '30', '30', '30', '30', '29', '29', '29', '28', '28', '28', '28', '27', '27', '27', '26', '26', '26', '26', '25', '25', '25', '25', '25', '25', '24', '24', '23', '23', '23', '23', '22', '22', '22', '22', '21', '21', '21', '21', '20', '20', '20', '19', '19', '19', '19', '19', '19', '18', '18', '18', '18', '17', '17', '17', '16', '16', '16', '16', '16', '15', '15', '15', '15', '15', '14', '14', '14', '14', '13', '13', '13', '13', '13', '12', '12', '12', '12', '12', '11', '11', '11', '11', '11', '10', '10', '10', '10', '10', '9', '9', '9', '9', '9', '9', '8', '8', '8', '8', '8', '7', '7', '7', '7', '6', '6', '6', '5', '5', '5', '4', '4', '4', '4', '4', '4', '4', '3', '3', '3', '3', '2', '2', '2', '2', '2', '1', '1', '1', '1']
-        else:
-            data = sorted(list(map(lambda n: (n.decode("utf-8"), r.get(n).decode("utf-8")) if r.get(n).decode("utf-8").isdigit() else None, r.keys())),key = lambda x: int(x[1]) if x else 0, reverse = True)
-            print(data)
-            names = [item[0] for item in data if item is not None]
-            numbers = [item[1] for item in data if item is not None]
-            print(names)
-            print(numbers)
-        return render_template("graph.html",names=names[:40], numbers=numbers[:40])"""
-
-"""@app.route('/presentUser')
-def present():
-    sp = spotipy.Spotify(auth=session['tokens'].get('access_token'))
-    top_artists = sp.current_user_top_artists(limit=50)
-    artists = []
-    print(top_artists['items'])
-    for i, item in enumerate(top_artists['items']):
-        artists.append([i + 1, item['name'], item['images'][0]['url'], item['popularity']])
-    print(artists)
-    most_pop_for_quip = random.choice(sorted(artists[:20], key=lambda t: t[3], reverse=True)[0:3])[1]
-    print(most_pop_for_quip)
-    quips = ["As basic as it comes.", "You like {} too? No way.".format(most_pop_for_quip),
-             "I've seen better artists on my mom's Spotify Wrapped.", "You must be in JE."]
-    random_quip = random.choice(quips)
-    return render_template("presentUser.html", artists=artists, random_quip=random_quip)
-
-"""
-
-
-
-if debug:
-    if __name__ == '__main__':
-        app.run(debug=debug)#, ssl_context="adhoc")
-else:
-    if __name__ == '__main__':
-        app.run()
+if __name__ == '__main__':
+    app.run(debug=debug)
